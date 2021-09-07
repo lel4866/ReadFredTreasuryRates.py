@@ -1,5 +1,6 @@
-""" program to read and use FRED interest rates, and a function to return interpolated rate for any period
-from 0 days to 360 days.
+"""
+program to read FRED LIBOR interest rates, and a function to return the interpolated rate for any duration,
+from 0 days to 360 days, for any given date in the FRED series
 
 The intention is that this will be used for things like the risk free rate for Black Scholes computations.
 
@@ -8,13 +9,12 @@ and creates a dictionary whose keys are the duration in days (1, 7, 30, 60, 90, 
 and whose values are another dictionary whose keys are a date and whose value is the rate in percent
 
 the FRED LIBOR database goes back to 1986 or so, but has some missing days. Missing days are interpolated so there
-will be a key for every day of the year from 1/1/1986 forward
+will be a value for every day of the year from the start of the FRED series forward
 
 After 12/31/2021, LIBOR rates will be replaced by SOFR and this code will be modified appropriately so the caller
-doesn't need to know whether the rate comes from the LIBOR dtatbase or SOFR database
+doesn't need to know whether the rate comes from the LIBOR database or SOFR database
 """
 
-import math
 import numpy
 import pandas
 import datetime
@@ -24,6 +24,7 @@ FRED_interest_rates = {1: {'name': 'USDONTD156N'}, 7: {'name': 'USD1WKD156N'}, 3
                        60: {'name': 'USD2MTD156N'}, 90: {'name': 'USD3MTD156N'}, 180: {'name': 'USD6MTD156N'},
                        360: {'name': 'USD12MD156N'}}
 global_first_date = numpy.datetime64('1986-01-01')
+
 
 def read_FRED_interest_rates():
     global FRED_interest_rates
@@ -43,24 +44,25 @@ def read_FRED_interest_rates():
         if first_date > global_first_date:
             global_first_date = first_date
 
+        # save data frame back in FRED_interest_rates dictionary
+        series['data'] = rate_df
+
         # for informational purposes only
         print(series_name)
         row = rate_df.iloc[0]
         print(row.date.date(), row.rate)
-        lastrow = len(rate_df.index) - 1
-        row = rate_df.iloc[len(rate_df.index) - 1]
+        last_row = len(rate_df.index) - 1
+        row = rate_df.iloc[last_row - 1]
         print(row.date.date(), row.rate)
-        print()
-        break
+        print()  # while debugging
 
     # now create numpy array with 1 row for every day between global_first_date and today
-    # so, in order to grab a rate we just compute # of days between requested date and global_first_dat, and that's the
+    # so, in order to grab a rate we just compute # of days between requested date and global_first_date, and that's the
     # index into the numpy array
     numrows = ((today - global_first_date) + timedelta(1)).days
     for duration, series in FRED_interest_rates.items():
         rate_array = numpy.full(numrows, numpy.nan, numpy.float)
-        rate_df = series['df']
-        prev_date = global_first_date - timedelta(1)
+        rate_df = series['data']
         for index, row in rate_df.iterrows():
             # since pandas has a weird way of handling nan's, we have to set numpy array with nan this way:
             i = (row[0] - global_first_date).days
@@ -70,8 +72,8 @@ def read_FRED_interest_rates():
         # now use pandas interpolate method to remove NaN's
         pandas_series = pandas.Series(rate_array)
         pandas_series.interpolate(inplace=True)
-        rate_array = pandas_series.values
-        y = 1
+        series['data'] = pandas_series.values
+        y = 1 # debug
 
     print("Starting date will be: ", global_first_date)
 
