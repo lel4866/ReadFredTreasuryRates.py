@@ -64,8 +64,11 @@ def read_FRED_interest_rates():
         rate_df = series['df']
         prev_date = global_first_date - timedelta(1)
         for index, row in rate_df.iterrows():
+            # since pandas has a weird way of handling nan's, we have to set numpy array with nan this way:
             i = (row[0] - global_first_date).days
-            rate_array[i] = row[1]
+            rate = row[1]
+            rate_array[i] = rate if not pandas.isnull(rate) else numpy.nan
+
         # now use pandas interpolate method to remove NaN's
         pandas_series = pandas.Series(rate_array)
         pandas_series.interpolate(inplace=True)
