@@ -37,8 +37,6 @@ def read_FRED_interest_rates():
         FRED_url = f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_name}&cosd=1985-01-01&coed={today_str}'
         rate_df = pandas.read_csv(FRED_url, header=0, names=['date', 'rate'], parse_dates=[0], na_values={'rate': '.'},
                                   keep_default_na=False, engine='c')
-        rate_df.sort_values(by='date', inplace=True)
-        series['df'] = rate_df
 
         # keep track of overall earliest date of all series read
         first_date = rate_df.iloc[0].date
