@@ -81,10 +81,6 @@ def read_FRED_interest_rates():
         # now use pandas interpolate method to remove NaN's
         pandas_series = pandas.Series(series_array)
         pandas_series.interpolate(inplace=True)
-        #x = pandas_series.values
-        #if numpy.isnan(numpy.dot(x, x)):
-        #    y = 1
-        #series['data'] = pandas_series.values
 
         # now append rates for a specific series to overall rates array
         rates_array[:,icol] = pandas_series.values
@@ -94,7 +90,7 @@ def read_FRED_interest_rates():
     # now fit log function for each row of rates array; put coefficients in last 2 columns
     duration_array = numpy.array([1, 7, 30, 60, 90, 180, 360])
     for row in rates_array:
-        row[7:9] = optimize.curve_fit(lambda t, a, b: a+b*numpy.log(t), duration_array, row[0:7])[0]
+        row[7:9] = optimize.curve_fit(lambda x, a, b: a+b*numpy.log(x), duration_array, row[0:7])[0]
 
     end_time = time.time()
     print("Starting date will be: ", global_first_date.date())
