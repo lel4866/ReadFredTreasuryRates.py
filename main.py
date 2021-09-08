@@ -16,9 +16,11 @@ doesn't need to know whether the rate comes from the LIBOR database or SOFR data
 """
 
 import numpy
+from scipy import optimize
 import pandas
 import datetime
 from datetime import timedelta
+import time
 
 FRED_interest_rates = {1: {'name': 'USDONTD156N'}, 7: {'name': 'USD1WKD156N'}, 30: {'name': 'USD1MTD156N'},
                        60: {'name': 'USD2MTD156N'}, 90: {'name': 'USD3MTD156N'}, 180: {'name': 'USD6MTD156N'},
@@ -30,6 +32,7 @@ def read_FRED_interest_rates():
     global FRED_interest_rates
     global global_first_date
 
+    start_time = time.time()
     global_first_date = pandas.Timestamp('1986-01-01')
     today = pandas.Timestamp.today()
     today_str = today.strftime('%Y-%m-%d')
@@ -56,29 +59,50 @@ def read_FRED_interest_rates():
         print(row.date.date(), row.rate)
         print()  # while debugging
 
-    # now create numpy array with 1 row for every day between global_first_date and today
-    # so, in order to grab a rate we just compute # of days between requested date and global_first_date, and that's the
-    # index into the numpy array
+    # now create numpy array with 1 row for EVERY day (including weekends and holidays) between global_first_date and
+    # today, and 1 column for each FRED series plus 2 columns for the coefficients of a fitted logarithmic curve that
+    # is fitted for each day.
+    # once we do this, in order to grab a rate for a specific day and duration, we just compute # of days between
+    # requested date and global_first_date, and use that as the index into the numpy rate array, then use the
+    # requested duration and curve fit coefficients to compute interpolated_rate = A + B*log(duration)
     numrows = ((today - global_first_date) + timedelta(1)).days
+    numcols = 2 + len(FRED_interest_rates)
+    rates_array = numpy.empty((numrows, numcols), float)
+    icol = 0
     for duration, series in FRED_interest_rates.items():
-        rate_array = numpy.full(numrows, numpy.nan, numpy.float)
         rate_df = series['data']
+        series_array = numpy.empty((numrows), float)
         for index, row in rate_df.iterrows():
             # since pandas has a weird way of handling nan's, we have to set numpy array with nan this way:
             i = (row[0] - global_first_date).days
             rate = row[1]
-            rate_array[i] = rate if not pandas.isnull(rate) else numpy.nan
+            series_array[i] = rate if not pandas.isnull(rate) else numpy.nan
 
         # now use pandas interpolate method to remove NaN's
-        pandas_series = pandas.Series(rate_array)
+        pandas_series = pandas.Series(series_array)
         pandas_series.interpolate(inplace=True)
-        series['data'] = pandas_series.values
+        #x = pandas_series.values
+        #if numpy.isnan(numpy.dot(x, x)):
+        #    y = 1
+        #series['data'] = pandas_series.values
+
+        # now append rates for a specific series to overall rates array
+        rates_array[:,icol] = pandas_series.values
+        icol = icol + 1
         y = 1 # debug
 
-    print("Starting date will be: ", global_first_date)
+    # now fit log function for each row of rates array; put coefficients in last 2 columns
+    duration_array = numpy.array([1, 7, 30, 60, 90, 180, 360])
+    for row in rates_array:
+        row[7:9] = optimize.curve_fit(lambda t, a, b: a+b*numpy.log(t), duration_array, row[0:7])[0]
+
+    end_time = time.time()
+    print("Starting date will be: ", global_first_date.date())
+    print(f"Elapsed time is {end_time - start_time} seconds")
 
 
 def FRED_interest_rate(date: datetime, duration: int) -> float:
+    # get the two series to interpolate between
     return 0
 
 
