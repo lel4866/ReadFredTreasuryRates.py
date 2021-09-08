@@ -13,19 +13,21 @@ will be a value for every day of the year from the start of the FRED series forw
 
 After 12/31/2021, LIBOR rates will be replaced by SOFR and this code will be modified appropriately so the caller
 doesn't need to know whether the rate comes from the LIBOR database or SOFR database
+
+I make no guarantees of any kind for this program...use at your own risk
 """
 
 import numpy
-from numpy import ndarray
-from scipy import optimize
 import pandas
 import datetime
-from datetime import timedelta
 import time
 
 
 global_first_date = numpy.datetime64('1986-01-01')
 duration_list = numpy.array([1, 7, 30, 60, 90, 180, 360])
+interpolation_vector: numpy.ndarray
+rates_array: numpy.ndarray
+
 
 def read_FRED_interest_rates():
     global global_first_date, interpolation_vector, rates_array
@@ -62,18 +64,19 @@ def read_FRED_interest_rates():
         print()  # while debugging
 
     # now create numpy array with 1 row for EVERY day (including weekends and holidays) between global_first_date and
-    # today, and 1 column for each FRED series plus 2 columns for the coefficients of a fitted logarithmic curve that
-    # is fitted for each day.
+    # today, and 1 column for each FRED series
     # once we do this, in order to grab a rate for a specific day and duration, we just compute # of days between
-    # requested date and global_first_date, and use that as the index into the numpy rate array, then use the
-    # requested duration and curve fit coefficients to compute interpolated_rate = A + B*log(duration)
-    numrows = ((today - global_first_date) + timedelta(1)).days
+    # requested date and global_first_date, and use that as the index into the numpy rate_array, then use the
+    # requested duration to compute interpolated_rate (see detailed explanation below)
+    numrows = ((today - global_first_date) + datetime.timedelta(1)).days
     numcols = len(FRED_interest_rates)
     rates_array = numpy.empty((numrows, numcols), float)
+
+    # interpolate to replace NaN's (after annoying setup, uses pandas.interpolate)
     icol = 0
     for duration, series in FRED_interest_rates.items():
         rate_df = series['data']
-        series_array = numpy.empty((numrows), float)
+        series_array = numpy.empty(numrows, float)
         for index, row in rate_df.iterrows():
             # since pandas has a weird way of handling nan's, we have to set numpy array with nan this way:
             i = (row[0] - global_first_date).days
@@ -85,9 +88,8 @@ def read_FRED_interest_rates():
         pandas_series.interpolate(inplace=True)
 
         # now append rates for a specific series to overall rates array
-        rates_array[:,icol] = pandas_series.values
+        rates_array[:, icol] = pandas_series.values
         icol = icol + 1
-        y = 1 # debug
 
     # now create interpolation_vector, which contains a column index into the rates_array. To
     # interpolate an interest rate, first you select the row in the rates_array which corresponds to the date that you
@@ -113,6 +115,7 @@ def read_FRED_interest_rates():
     print(f"read_FRED_interest_rates: Elapsed time is {end_time - start_time} seconds")
 
 
+# compute risk free rate for requested date and duration for use in Black Scholes formula
 def FRED_interest_rate(date: datetime, duration: int) -> float:
     date_index = (date - global_first_date).days
     row = rates_array[date_index]
@@ -122,17 +125,21 @@ def FRED_interest_rate(date: datetime, duration: int) -> float:
     starting_val = row[column_index]
     ending_val = row[column_index+1]
     ratio = (duration - starting_duration) / (ending_duration - starting_duration)
-    rate = starting_val + ratio*(ending_val - starting_val)
-    return rate
+    libor_rate = starting_val + ratio*(ending_val - starting_val)
+
+    # convert LIBOR rate to BSM convention per Adam Speight in Trading Dominion Mastermind session comment for 2021-07-07
+    bs_rate = 360/duration * numpy.log(1 + libor_rate*duration/365)
+
+    return bs_rate
 
 
 if __name__ == '__main__':
     read_FRED_interest_rates()
 
     # tests
-    date = datetime.datetime(2020, 6, 15)
-    rate1 = FRED_interest_rate(date, 1)
-    rate2 = FRED_interest_rate(date, 9)
-    rate3 = FRED_interest_rate(date, 47)
-    rate4 = FRED_interest_rate(date, 200)
-    x = 1
+    date0 = datetime.datetime(2020, 6, 15)
+    rate1 = FRED_interest_rate(date0, 1)
+    rate2 = FRED_interest_rate(date0, 9)
+    rate3 = FRED_interest_rate(date0, 47)
+    rate4 = FRED_interest_rate(date0, 200)
+    x = 1  # for debug
