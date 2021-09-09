@@ -19,6 +19,17 @@ rates_global_first_date) or later than today
 
 Throws an Exception if duration is less than 0 or greater 360
 
+**read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1))**
+
+Reads S&P 500 dividend yield from Nasdaq Data Link (formerly Quandl)
+This series typically only has one value per month, I interpolated between those values. I'm
+not sure how good this is, but the values do change over the month so it's probabnly at least
+as good as assuming the value stays fixed over the month
+
+**sp500_dividend_yield(date: datetime) -> float**
+
+Returns an annualized dividen yield for the S&P500 for the requested date
+
 # Programming comments:
 This is written using Python 3.9 and Pycharm 2021.2.1
 
