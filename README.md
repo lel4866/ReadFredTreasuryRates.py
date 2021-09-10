@@ -28,7 +28,7 @@ as good as assuming the value stays fixed over the month
 
 **sp500_dividend_yield(date: datetime) -> float**
 
-Returns an annualized dividen yield for the S&P500 for the requested date
+Returns an annualized dividend yield for the S&P500 for the requested date
 
 # Programming comments:
 This is written using Python 3.9 and Pycharm 2021.2.1

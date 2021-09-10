@@ -39,11 +39,10 @@ rates_duration_list = numpy.array([1, 7, 30, 60, 90, 180, 360])  # the durations
 rates_interpolation_vector: numpy.ndarray  # for each day, has index of series to use to interpolate
 rates_array: numpy.ndarray  # the actual rate vector...1 value per day in percent
 
+# global variables used for sp500 dividend yield functions
 dividend_array: numpy.ndarray  # vector containing sp500 dividen yield in percent
 dividends_global_first_date= numpy.datetime64('1980-01-01')  # will hold earliest existing date in dividend_array
-
-# global variables used for sp500 dividend yield functions
-dividends_first_date = numpy.datetime64('1980-01-01') # will be set by read_sp500_dividend_yield
+dividends_global_last_date: numpy.datetime64
 
 # read risk free rate series from FRED database for durations specified in rates_duration_list (which must match those
 # in FRED_interest_rates below) into global rates_array vector, which has a (interpolated) rate for each day
@@ -173,13 +172,16 @@ def risk_free_rate(requested_date: datetime.date, duration: int) -> float:
     #xx = pandas.Timestamp(requested_date) - rates_global_first_date
     date_index = (requested_date - rates_global_first_date).days
     if (date_index < 0):
-        raise Exception(f'ReadFredTresuryRates.py:risk_free_rate: requested date ({requested_date.date} is before earliest available date in series ({rates_global_first_date.date}))')
+        raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested date ({requested_date}) is before earliest available date in series ({rates_global_first_date})')
     if (date_index >= len(rates_array)):
-        raise Exception(f'ReadFredTresuryRates.py:risk_free_ratee: requested date ({requested_date.date} is after latest available date in series ({rates_global_first_date.date}))')
+        if requested_date > datetime.date.today():
+            raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested date ({requested_date}) is after latest available date in series ({rates_global_last_date})')
+        else:
+            date_index = len(rates_array) - 1
     if (duration < 0):
-        raise Exception(f'ReadFredTresuryRates.py:risk_free_rate: requested duration ({duration} is less than 0. Must be between 0 and 360')
+        raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested duration ({duration} is less than 0. Must be between 0 and 360')
     if (duration > 360):
-        raise Exception(f'ReadFredTresuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 0 and 360')
+        raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 0 and 360')
 
     # treate a duration of 0 as 1
     if duration == 0:
@@ -204,7 +206,7 @@ def risk_free_rate(requested_date: datetime.date, duration: int) -> float:
 # which has an entry for every day, starting at beginning date
 # raises Exception if there are any NaNs, if earliest date is later than today
 def read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1)):
-    global dividends_global_first_date, dividend_array
+    global dividends_global_first_date, dividends_global_last_date, dividend_array
 
     # note that series is returned in descending date order (today is the first row)
     url = 'https://data.nasdaq.com/api/v3/datasets/MULTPL/SP500_DIV_YIELD_MONTH.csv?api_key=r1LNaRv-SYEyP9iY8BKj'
@@ -232,23 +234,35 @@ def read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1))
     dividend_series.interpolate(inplace=True)
     dividend_array = dividend_series.to_numpy()
     dividends_global_first_date = dividends_global_first_date.date()  # convert from pandas Timestamp to Python datetime
+    dividends_global_last_date = last_date.date()
+    x = 1
 
 
-def sp500_dividend_yield(date: datetime) -> float:
-    index = (date - dividends_global_first_date).days
-    return dividend_array[index]
+def sp500_dividend_yield(requested_date: datetime) -> float:
+    date_index = (requested_date - dividends_global_first_date).days
+    if (date_index < 0):
+        raise ValueError(f'ReadFredTresuryRates.py:sp500_dividend_yield: requested date ({requested_date.date}) is before earliest available date in series ({dividends_global_first_date.date})')
+    if (date_index >= len(dividend_array)):
+        if requested_date > datetime.date.today():
+            raise ValueError(f'ReadFredTresuryRates.py:sp500_dividend_yield: requested date ({requested_date.date}) is after latest available date in series ({dividends_global_last_date.date})')
+        else:
+            date_index = len(dividend_array) - 1
+
+    return dividend_array[date_index]
 
 
 if __name__ == '__main__':
     read_risk_free_rates(datetime.date(2000, 1, 1))  # parameter is earliest date that we want series for
 
     # tests of risk free rate
-    date0 = datetime.datetime(2020, 6, 15).date()
+    date0 = datetime.date(2020, 6, 15)
     rate1 = risk_free_rate(date0, 1)
     rate9 = risk_free_rate(date0, 9)
     rate47 = risk_free_rate(date0, 47)
     rate200 = risk_free_rate(date0, 200)
     rate360 = risk_free_rate(date0, 360)
+    date0 = datetime.datetime(2020, 6, 15).date()
+    rate200t = risk_free_rate(datetime.date.today(), 200)
 
     rate0 = risk_free_rate(date0, 0)
     assert rate0 == rate1, f"0 day rate ({rate0}) does not match 1 day rate ({rate0})"
@@ -267,7 +281,7 @@ if __name__ == '__main__':
         exception_caught = True
     assert exception_caught, "Error: no exception caught when requesting rate for duration of 500 (greater than 360)"
 
-    date0 = datetime.datetime(2001, 1, 1).date()
+    date0 = datetime.date(2001, 1, 1)
     exception_caught = False
     try:
         rate9 = risk_free_rate(date0, 9)
@@ -279,5 +293,20 @@ if __name__ == '__main__':
 
     # tests of dividend yield
     yield1 = sp500_dividend_yield(datetime.date(2016, 6, 1))
+    yield2 = sp500_dividend_yield(datetime.date.today())
+
+    exception_caught = False
+    try:
+        yield3 = sp500_dividend_yield(datetime.date(1999, 6, 1))
+    except:
+        exception_caught = True
+    assert exception_caught, f"Error: no exception caught when requesting dividend yield for date before first available date ({dividends_global_first_date})"
+
+    exception_caught = False
+    try:
+        yield4 = sp500_dividend_yield(datetime.date(2030, 6, 1))
+    except:
+        exception_caught = True
+    assert exception_caught, f"Error: no exception caught when requesting dividend yield for date after last available date ({dividends_global_last_date})"
 
     x = 1  # for debug
