@@ -41,14 +41,15 @@ rates_array: numpy.ndarray  # the actual rate vector...1 value per day in percen
 
 # global variables used for sp500 dividend yield functions
 dividend_array: numpy.ndarray  # vector containing sp500 dividen yield in percent
-dividends_global_first_date= numpy.datetime64('1980-01-01')  # will hold earliest existing date in dividend_array
+dividends_global_first_date = numpy.datetime64('1980-01-01')  # will hold earliest existing date in dividend_array
 dividends_global_last_date: numpy.datetime64
+
 
 # read risk free rate series from FRED database for durations specified in rates_duration_list (which must match those
 # in FRED_interest_rates below) into global rates_array vector, which has a (interpolated) rate for each day
 # assumes missing data is encoded as a '.', which was true on 9/9/2021
 # raises Exception if earliest date is earlier than 2000-01-01 or later than today
-def read_risk_free_rates(earliest_date: datetime=datetime.date(2000, 1, 1)):
+def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     global rates_global_first_date, rates_global_last_date, rates_interpolation_vector, rates_array
 
     FRED_interest_rates = {1: {'name': 'USDONTD156N'}, 7: {'name': 'USD1WKD156N'}, 30: {'name': 'USD1MTD156N'},
@@ -57,14 +58,12 @@ def read_risk_free_rates(earliest_date: datetime=datetime.date(2000, 1, 1)):
 
     start_time = time.time()
 
-    if (earliest_date < datetime.date(2000, 1, 1)):
+    if earliest_date < datetime.date(2000, 1, 1):
         raise Exception(f'ReadFredTresuryRates.py:read_risk_free_rates: earliest date ({earliest_date} is before 2000-01-01')
-    if (earliest_date > datetime.date.today()):
+    if earliest_date > datetime.date.today():
         raise Exception(f'ReadFredTresuryRates.py:read_risk_free_rates: earliest date ({earliest_date} is after today (datetime.date.today())')
 
-    #rates_global_first_date = pandas.Timestamp('1986-01-01')
     rates_global_first_date = datetime.datetime(1986, 1, 1)
-    #today = pandas.Timestamp.today()
     today = datetime.date.today()
     today_str = today.strftime('%Y-%m-%d')
     for duration, series in FRED_interest_rates.items():
@@ -86,7 +85,7 @@ def read_risk_free_rates(earliest_date: datetime=datetime.date(2000, 1, 1)):
 
         # keep track of overall latest date of all series read...so this means the earliest last date
         last_date = rate_df.iloc[-1].date
-        if rates_global_last_date == None:
+        if rates_global_last_date is None:
             rates_global_last_date = last_date
         elif last_date < rates_global_last_date:
             rates_global_last_date = last_date
@@ -109,7 +108,7 @@ def read_risk_free_rates(earliest_date: datetime=datetime.date(2000, 1, 1)):
     icol = 0
     for duration, series in FRED_interest_rates.items():
         rate_df = series['data']  # contains date and rate
-        rate_df = rate_df[rate_df.date >= rates_global_first_date] # remove unneeded rows
+        rate_df = rate_df[rate_df.date >= rates_global_first_date]  # remove unneeded rows
 
         series_array = numpy.empty(numrows, float)
         for index, row in rate_df.iterrows():
@@ -136,7 +135,6 @@ def read_risk_free_rates(earliest_date: datetime=datetime.date(2000, 1, 1)):
         print()
 
         icol = icol + 1
-
 
     # now create interpolation_vector, which contains a column index into the rates_array. To
     # interpolate an interest rate, first you select the row in the rates_array which corresponds to the date that you
@@ -169,18 +167,17 @@ def read_risk_free_rates(earliest_date: datetime=datetime.date(2000, 1, 1)):
 # returns risk free rate for requested date and duration for use in Black Scholes formula
 # raises Exception if requested date is before earliest date available or after latest date available
 def risk_free_rate(requested_date: datetime.date, duration: int) -> float:
-    #xx = pandas.Timestamp(requested_date) - rates_global_first_date
     date_index = (requested_date - rates_global_first_date).days
-    if (date_index < 0):
+    if date_index < 0:
         raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested date ({requested_date}) is before earliest available date in series ({rates_global_first_date})')
-    if (date_index >= len(rates_array)):
+    if date_index >= len(rates_array):
         if requested_date > datetime.date.today():
             raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested date ({requested_date}) is after latest available date in series ({rates_global_last_date})')
         else:
             date_index = len(rates_array) - 1
-    if (duration < 0):
+    if duration < 0:
         raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested duration ({duration} is less than 0. Must be between 0 and 360')
-    if (duration > 360):
+    if duration > 360:
         raise ValueError(f'ReadFredTresuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 0 and 360')
 
     # treate a duration of 0 as 1
@@ -205,7 +202,7 @@ def risk_free_rate(requested_date: datetime.date, duration: int) -> float:
 # read the sp500 dividend yield (in percent) from Nasdaq Data Link (formerly Quandl) into global dividend array
 # which has an entry for every day, starting at beginning date
 # raises Exception if there are any NaNs, if earliest date is later than today
-def read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1)):
+def read_sp500_dividend_yield(earliest_date: datetime = datetime.date(2000, 1, 1)):
     global dividends_global_first_date, dividends_global_last_date, dividend_array
 
     # note that series is returned in descending date order (today is the first row)
@@ -217,7 +214,7 @@ def read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1))
     dividend_df = dividend_df[dividend_df['date'] >= pandas_earliest_date]
 
     if dividend_df.dividend.isnull().any():
-        raise Exception('ReadFredTresuryRates.py:read_sp500_dividend_yield: some values are NaN')
+        raise ValueError('ReadFredTresuryRates.py:read_sp500_dividend_yield: some values are NaN')
 
     # create a numpy vector with a slot for every day (including weekends and holidays)
     dates = dividend_df['date']
@@ -235,16 +232,15 @@ def read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1))
     dividend_array = dividend_series.to_numpy()
     dividends_global_first_date = dividends_global_first_date.date()  # convert from pandas Timestamp to Python datetime
     dividends_global_last_date = last_date.date()
-    x = 1
 
 
 def sp500_dividend_yield(requested_date: datetime) -> float:
     date_index = (requested_date - dividends_global_first_date).days
-    if (date_index < 0):
-        raise ValueError(f'ReadFredTresuryRates.py:sp500_dividend_yield: requested date ({requested_date.date}) is before earliest available date in series ({dividends_global_first_date.date})')
-    if (date_index >= len(dividend_array)):
+    if date_index < 0:
+        raise ValueError(f'ReadFredTresuryRates.py:sp500_dividend_yield: requested date ({requested_date}) is before earliest available date in series ({dividends_global_first_date})')
+    if date_index >= len(dividend_array):
         if requested_date > datetime.date.today():
-            raise ValueError(f'ReadFredTresuryRates.py:sp500_dividend_yield: requested date ({requested_date.date}) is after latest available date in series ({dividends_global_last_date.date})')
+            raise ValueError(f'ReadFredTresuryRates.py:sp500_dividend_yield: requested date ({requested_date}) is after latest available date in series ({dividends_global_last_date})')
         else:
             date_index = len(dividend_array) - 1
 
