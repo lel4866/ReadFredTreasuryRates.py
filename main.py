@@ -24,26 +24,35 @@ I make no guarantees of any kind for this program...use at your own risk
 Lawrence E. Lewis
 """
 
-import numpy
+import numpy as np
 import pandas
+import pandas as pd
 import datetime
 import time
-import multiprocessing
+from multiprocessing import Pool
+from threading import Lock
 
 version = '0.0.2'
 version_date = '2021-09-09'
 
 # global variables used for risk free rate functions
-rates_global_first_date = numpy.datetime64('1980-01-01')  # will hold earliest existing date over all the FRED series
+rates_global_first_date = np.datetime64('1980-01-01')  # will hold earliest existing date over all the FRED series
 rates_global_last_date = None  # will hold earliest existing date over all the FRED series
-rates_duration_list = numpy.array([1, 7, 30, 60, 90, 180, 360])  # the durations of the available FRED series
-rates_interpolation_vector: numpy.ndarray  # for each day, has index of series to use to interpolate
-rates_array: numpy.ndarray  # the actual rate vector...1 value per day in percent
+rates_duration_list = np.array([1, 7, 30, 60, 90, 180, 360])  # the durations of the available FRED series
+rates_interpolation_vector: np.ndarray  # for each day, has index of series to use to interpolate
+rates_array: np.ndarray  # the actual rate vector...1 value per day in percent
+today_str: str = datetime.date.today().strftime('%Y-%m-%d')
+
+# the main data structure which is filled in by read_risk_free_rates
+FRED_interest_rates = {1: {'name': 'USDONTD156N', 'data': None}, 7: {'name': 'USD1WKD156N', 'data': None},
+                       30: {'name': 'USD1MTD156N', 'data': None}, 60: {'name': 'USD2MTD156N', 'data': None},
+                       90: {'name': 'USD3MTD156N', 'data': None}, 180: {'name': 'USD6MTD156N', 'data': None},
+                       360: {'name': 'USD12MD156N', 'data': None}}
 
 # global variables used for sp500 dividend yield functions
-dividend_array: numpy.ndarray  # vector containing sp500 dividen yield in percent
-dividends_global_first_date = numpy.datetime64('1980-01-01')  # will hold earliest existing date in dividend_array
-dividends_global_last_date: numpy.datetime64
+dividend_array: np.ndarray  # vector containing sp500 dividen yield in percent
+dividends_global_first_date = np.datetime64('1980-01-01')  # will hold earliest existing date in dividend_array
+dividends_global_last_date: np.datetime64
 
 
 # read risk free rate series from FRED database for durations specified in rates_duration_list (which must match those
@@ -51,11 +60,8 @@ dividends_global_last_date: numpy.datetime64
 # assumes missing data is encoded as a '.', which was true on 9/9/2021
 # raises Exception if earliest date is earlier than 2000-01-01 or later than today
 def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
-    global rates_global_first_date, rates_global_last_date, rates_interpolation_vector, rates_array
-
-    FRED_interest_rates = {1: {'name': 'USDONTD156N'}, 7: {'name': 'USD1WKD156N'}, 30: {'name': 'USD1MTD156N'},
-                           60: {'name': 'USD2MTD156N'}, 90: {'name': 'USD3MTD156N'}, 180: {'name': 'USD6MTD156N'},
-                           360: {'name': 'USD12MD156N'}}
+    global rates_global_first_date, rates_global_last_date, rates_interpolation_vector, rates_array, FRED_interest_rates
+    rates_duration_list = np.array(list(FRED_interest_rates.keys()))
 
     start_time = time.time()
 
@@ -64,24 +70,19 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     if earliest_date > datetime.date.today():
         raise Exception(f'ReadFredTresuryRates.py:read_risk_free_rates: earliest date ({earliest_date} is after today ({datetime.date.today()})')
 
-    pool = multiprocessing.Pool()
-
-    rates_global_first_date = datetime.datetime(1986, 1, 1)
-    today = datetime.date.today()
-    today_str = today.strftime('%Y-%m-%d')
+    # read FRED series in parallel
+    pool = Pool(processes=len(rates_duration_list))
     for duration, series in FRED_interest_rates.items():
-        series_name = series['name']
-        print("Reading ", series_name)
-        FRED_url = f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_name}&cosd=1985-01-01&coed={today_str}'
-        rate_df = pandas.read_csv(FRED_url, header=0, names=['date', 'rate'], parse_dates=[0], na_values={'rate': '.'},
-                                  keep_default_na=False, engine='c')
+        pool.apply_async(read_fred_series, (earliest_date, duration, series), callback=update_rates)
+        #break  # debug - just process 1 item
+    pool.close()
+    pool.join()
 
-        # remove dates before specified earliest_date (default of 1/1/2000)
-        pandas_timestamp = pandas.to_datetime(earliest_date)  # convert from Python datetime
-        rate_df = rate_df[rate_df['date'] >= pandas_timestamp]
-        series['data'] = rate_df
-
+    # get latest first date over all series, earliest last date over all series
+    rates_global_first_date = datetime.datetime(1986, 1, 1)
+    for series in FRED_interest_rates.values():
         # keep track of overall earliest date of all series read
+        rate_df = series['data']
         first_date = rate_df.iloc[0].date
         if first_date > rates_global_first_date:
             rates_global_first_date = first_date
@@ -105,7 +106,7 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     # requested duration to compute interpolated_rate (see detailed explanation below)
     numrows = ((rates_global_last_date - rates_global_first_date) + datetime.timedelta(1)).days
     numcols = len(FRED_interest_rates)
-    rates_array = numpy.empty((numrows, numcols), float)
+    rates_array = np.empty((numrows, numcols), float)
 
     # interpolate to replace NaN's (after annoying setup to reconcile different NaN type, uses pandas.interpolate)
     icol = 0
@@ -113,16 +114,16 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
         rate_df = series['data']  # contains date and rate
         rate_df = rate_df[rate_df.date >= rates_global_first_date]  # remove unneeded rows
 
-        series_array = numpy.empty(numrows, float)
+        series_array = np.empty(numrows, float)
         for index, row in rate_df.iterrows():
-            # since pandas has a weird way of handling nan's, we have to set numpy array with nan this way:
+            # since pd has a weird way of handling nan's, we have to set numpy array with nan this way:
             i = (row[0] - rates_global_first_date).days
             rate = row[1]
-            series_array[i] = rate if not pandas.isnull(rate) else numpy.nan
+            series_array[i] = rate if not pd.isnull(rate) else np.nan
 
         # now use pandas interpolate method to remove NaN's
         # note that number of rows in series_array might be more than in rates_array
-        pandas_series = pandas.Series(series_array)
+        pandas_series = pd.Series(series_array)
         pandas_series.interpolate(inplace=True)
 
         # now append first numrows rates for a specific series to overall rates array (which is only numrows long)
@@ -139,6 +140,9 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
 
         icol = icol + 1
 
+    # free up global memory
+    FRED_interest_rates = None
+
     # now create interpolation_vector, which contains a column index into the rates_array. To
     # interpolate an interest rate, first you select the row in the rates_array which corresponds to the date that you
     # want the interest rate for, then you compute the rate by interpolating between the two columns that contain the
@@ -148,7 +152,7 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     # first get the rate row in the rates_array for 2020-06-15, then look in the interpolation_array in the 9th row
     # (index=8), which would be 1, indicating that you should interpolate between the rate in column 1 of the rate
     # row and column 2 of the rate row
-    rates_interpolation_vector = numpy.empty(361, int)
+    rates_interpolation_vector = np.empty(361, int)
     duration_start = 0
     icol = -1
     for duration_end in rates_duration_list:
@@ -165,6 +169,27 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
 
     end_time = time.time()
     print(f"read_risk_free_rates: Elapsed time is {end_time - start_time} seconds")
+
+
+# this function is called in a separate process, so can't reference module's global variables
+def read_fred_series(earliest_date: datetime, duration: int, series: dict):
+    series_name = series['name']
+    print("Reading ", series_name)
+    FRED_url = f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_name}&cosd=1985-01-01&coed={today_str}'
+    rate_df = pd.read_csv(FRED_url, header=0, names=['date', 'rate'], parse_dates=[0], na_values={'rate': '.'},
+                          keep_default_na=False, engine='c')
+
+    # remove dates before specified earliest_date (default of 1/1/2000)
+    pandas_timestamp = pd.to_datetime(earliest_date)  # convert from Python datetime
+    rate_df = rate_df[rate_df['date'] >= pandas_timestamp]
+    return (duration, rate_df)
+
+
+def update_rates(result: (int, pd.DataFrame)):
+    duration = result[0]
+    rate_df = result[1]
+    series = FRED_interest_rates[duration]
+    series['data'] = rate_df
 
 
 # returns risk free rate for requested date and duration for use in Black Scholes formula
@@ -197,7 +222,7 @@ def risk_free_rate(requested_date: datetime.date, duration: int) -> float:
     libor_rate = starting_val + ratio*(ending_val - starting_val)
 
     # convert LIBOR rate to BS convention per Adam Speight in Trading Dominion Mastermind session comment for 2021-07-07
-    bs_rate = 360.0/duration * numpy.log(1.0 + libor_rate*duration/365.0)
+    bs_rate = 360.0/duration * np.log(1.0 + libor_rate*duration/365.0)
 
     return bs_rate
 
@@ -210,10 +235,10 @@ def read_sp500_dividend_yield(earliest_date: datetime = datetime.date(2000, 1, 1
 
     # note that series is returned in descending date order (today is the first row)
     url = 'https://data.nasdaq.com/api/v3/datasets/MULTPL/SP500_DIV_YIELD_MONTH.csv?api_key=r1LNaRv-SYEyP9iY8BKj'
-    dividend_df = pandas.read_csv(url, header=0, names=['date', 'dividend'], parse_dates=[0], engine='c')
+    dividend_df = pd.read_csv(url, header=0, names=['date', 'dividend'], parse_dates=[0], engine='c')
 
     # remove dates before specified earliest_date (default of 1/1/2000)
-    pandas_earliest_date = pandas.to_datetime(earliest_date)
+    pandas_earliest_date = pd.to_datetime(earliest_date)
     dividend_df = dividend_df[dividend_df['date'] >= pandas_earliest_date]
 
     if dividend_df.dividend.isnull().any():
@@ -224,13 +249,13 @@ def read_sp500_dividend_yield(earliest_date: datetime = datetime.date(2000, 1, 1
     last_date = dates.iloc[0]
     dividends_global_first_date = dates.iloc[-1]
     num_rows = ((last_date - dividends_global_first_date) + datetime.timedelta(1)).days
-    dividend_array = numpy.full(num_rows, numpy.nan)
+    dividend_array = np.full(num_rows, np.nan)
     for index, row in dividend_df.iterrows():
         date_index = (row.date - dividends_global_first_date).days
         dividend_array[date_index] = row.dividend
 
     # interpolate to fill NaN's. I know this is a little dicey...but interpolated values are as good as any others
-    dividend_series = pandas.Series(dividend_array)
+    dividend_series = pd.Series(dividend_array)
     dividend_series.interpolate(inplace=True)
     dividend_array = dividend_series.to_numpy()
     dividends_global_first_date = dividends_global_first_date.date()  # convert from pandas Timestamp to Python datetime
