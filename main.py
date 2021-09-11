@@ -28,6 +28,7 @@ import numpy
 import pandas
 import datetime
 import time
+import multiprocessing
 
 version = '0.0.2'
 version_date = '2021-09-09'
@@ -61,7 +62,9 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     if earliest_date < datetime.date(2000, 1, 1):
         raise Exception(f'ReadFredTresuryRates.py:read_risk_free_rates: earliest date ({earliest_date} is before 2000-01-01')
     if earliest_date > datetime.date.today():
-        raise Exception(f'ReadFredTresuryRates.py:read_risk_free_rates: earliest date ({earliest_date} is after today (datetime.date.today())')
+        raise Exception(f'ReadFredTresuryRates.py:read_risk_free_rates: earliest date ({earliest_date} is after today ({datetime.date.today()})')
+
+    pool = multiprocessing.Pool()
 
     rates_global_first_date = datetime.datetime(1986, 1, 1)
     today = datetime.date.today()
