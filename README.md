@@ -14,10 +14,10 @@ through 360
 
 Returns a rate (in percent) for a requested date and duration
 
-Throws an Exception if date is prior to earliest date of series (saved in global variable
-rates_global_first_date) or later than today
+Asserts (throws AssertException) if date is prior to earliest date of series (saved in global
+variable rates_global_first_date) or later than today
 
-Throws an Exception if duration is less than 0 or greater 360
+Asserts if duration is less than 0 or greater 360
 
 **read_sp500_dividend_yield(earliest_date: datetime=datetime.date(2000, 1, 1))**
 
@@ -31,6 +31,9 @@ as good as assuming the value stays fixed over the month
 Returns an annualized dividend yield for the S&P500 for the requested date
 
 # Programming comments:
+If you want to run without taking the time to check for valid parameter values, that is, turn
+off asserts, use: python -cO main.py
+
 This is written using Python 3.9 and Pycharm 2021.2.1
 
 
