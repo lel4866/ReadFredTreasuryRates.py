@@ -203,12 +203,21 @@ def rate_sanity_check() -> bool:
     # make sure risk free rates greater than 0 and less than 30
     # make sure the change between any days is less than 0.2
     passed = True
+    prior_rates = rates_array[0]
     for index_tuple, rate in np.ndenumerate(rates_array):
+        duration_index = index_tuple[1]
         if rate <= 0 or rate >= 30:
             date = rates_global_first_date + pd.DateOffset(index_tuple[0])
-            duration = rates_duration_list[index_tuple[1]]
-            print(f'ReadFredTreasuryRates.py:risk_free_rate: rate for duration: {duration}, date: {date}, is not reasonable: {rate}')
+            duration = rates_duration_list[duration_index]
+            print(f'ReadFredTreasuryRates.py:rate_sanity_check: rate for duration: {duration}, date: {date}, is not reasonable: {rate}')
             passed = False
+            continue
+
+        change_in_rate = abs(rate - prior_rates[duration_index])
+        if change_in_rate > 0.5:
+            print(f'ReadFredTreasuryRates.py:rate_sanity_check: change in rate for duration: {duration}, date: {date}, is not reasonable: {change_in_rate}')
+            passed = False
+
     return passed
 
 
