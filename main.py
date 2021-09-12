@@ -182,7 +182,6 @@ def read_fred_series(earliest_date: datetime, duration: int, series: dict):
     fred_url = f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_name}&cosd=1985-01-01&coed={today_str}'
     rate_df = pd.read_csv(fred_url, header=0, names=['date', 'rate'], parse_dates=['date'], na_values={'rate': '.'},
                           keep_default_na=False, engine='c')
-    # convert date from pandas Timestamp to Python datetime
 
     # remove dates before specified earliest_date (default of 1/1/2000)
     rate_df = rate_df[rate_df['date'] >= earliest_date]
@@ -214,6 +213,7 @@ def rate_sanity_check() -> bool:
             continue
 
         change_in_rate = abs(rate - prior_rates[duration_index])
+        prior_rates[duration_index] = rate
         if change_in_rate > 0.5:
             print(f'ReadFredTreasuryRates.py:rate_sanity_check: change in rate for duration: {duration}, date: {date}, is not reasonable: {change_in_rate}')
             passed = False
@@ -292,7 +292,32 @@ def read_sp500_dividend_yield(earliest_date: datetime.date = datetime.date(2000,
     dividends_global_first_date = dividends_global_first_date.to_pydatetime().date()  # convert from pandas Timestamp to Python datetime
     dividends_global_last_date = last_date.to_pydatetime().date()
 
+    # do sanity check
+    if not dividend_sanity_check():
+        raise ValueError("Nasdaq DataLink S&P500 dividend yield data did not pass sanity check.")
+
     dividends_valid = True
+
+
+def dividend_sanity_check() -> bool:
+    # make sure dividend yield is greater than 0% and less than 5%
+    # make sure the change between any days is less than 0.2%
+    passed = True
+    prior_dividend = dividend_array[0]
+    for index, dividend in np.ndenumerate(dividend_array):
+        if dividend <= 0 or dividend >= 5:
+            date = dividends_global_first_date + datetime.timedelta(days=1)
+            print(f'ReadFredTreasuryRates.py:dividend_sanity_check: rate for {date}, is not reasonable: {dividend}')
+            passed = False
+            continue
+        dividend_change = abs(dividend - prior_dividend)
+        prior_dividend = dividend
+        if dividend_change >= 1:
+            date = dividends_global_first_date + datetime.timedelta(days=1)
+            print(f'ReadFredTreasuryRates.py:dividend_sanity_check: change in dividend for {date}, is not reasonable: {dividend_change}')
+            passed = False
+
+    return passed
 
 
 def sp500_dividend_yield(requested_date: datetime) -> float:
