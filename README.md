@@ -31,6 +31,10 @@ as good as assuming the value stays fixed over the month
 Returns an annualized dividend yield for the S&P500 for the requested date
 
 # Programming comments:
+I use asserts to check for invalid arguments to functions rather than raising exeptions because
+I consider invalid arguments a programming error. I raise exceptions (mostly ValueExceptions)
+for things like data problems
+
 If you want to run without taking the time to check for valid parameter values, that is, turn
 off asserts, use: python -cO main.py
 

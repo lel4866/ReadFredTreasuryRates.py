@@ -25,7 +25,7 @@ Note: if you want to run this program without the parameter checking asserts, us
 I make no guarantees of any kind for this program...use at your own risk
 Lawrence E. Lewis
 """
-
+import numpy
 import numpy as np
 import pandas as pd
 import datetime
@@ -37,12 +37,11 @@ version_date = '2021-09-11'
 
 # global variables used for risk free rate functions
 rates_valid = False
-rates_global_first_date: datetime.date = None  # will hold earliest existing date over all the FRED series
-rates_global_last_date: datetime.date = None  # will hold earliest existing date over all the FRED series
+rates_global_first_date: datetime.datetime = None  # will hold earliest existing date over all the FRED series
+rates_global_last_date: datetime.datetime = None  # will hold earliest existing date over all the FRED series
 rates_duration_list: np.array = None  # the durations of the available FRED series
 rates_interpolation_vector: np.ndarray = None  # for each day, has index of series to use to interpolate
 rates_array: np.ndarray = None  # the actual rate vector...1 value per day in percent
-today_str: str = datetime.date.today().strftime('%Y-%m-%d')
 
 # the main data structure which is filled in by read_risk_free_rates
 # this will be deleted (set to None) when read_risk_free_rates returns
@@ -54,8 +53,8 @@ fred_interest_rates = {1: {'name': 'USDONTD156N', 'data': None}, 7: {'name': 'US
 # global variables used for sp500 dividend yield functions
 dividends_valid = False
 dividend_array: np.ndarray = None  # vector containing sp500 dividend yield in percent
-dividends_global_first_date: datetime.date = None  # will hold earliest existing date in dividend_array
-dividends_global_last_date: datetime.date = None
+dividends_global_first_date: datetime.datetime = None  # will hold earliest existing date in dividend_array
+dividends_global_last_date: datetime.datetime = None
 
 
 # read risk free rate series from FRED database for durations specified in rates_duration_list (which must match those
@@ -63,7 +62,7 @@ dividends_global_last_date: datetime.date = None
 # assumes missing data is encoded as a '.', which was true on 9/9/2021
 # asserts if earliest date is earlier than 2000-01-01 or later than today
 # raises ValueError exception if actual data read does not pass basic sanity checks
-def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
+def read_risk_free_rates(earliest_date: datetime.datetime = datetime.datetime(2000, 1, 1)):
     global rates_global_first_date, rates_global_last_date, rates_interpolation_vector, rates_array,\
         fred_interest_rates, rates_duration_list, rates_valid
 
@@ -83,63 +82,17 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     pool.close()
     pool.join()
 
-    # get latest first date over all series, earliest last date over all series
-    rates_global_first_date = earliest_date
-    rates_global_last_date = datetime.datetime(3000, 1, 1)
-    for series in fred_interest_rates.values():
-        rate_df = series['data']
-        first_date = rate_df.iloc[0].date  # note: accessing 'date' column via attribute
-        if first_date > rates_global_first_date:
-            rates_global_first_date = first_date.to_pydatetime()
-        last_date = rate_df.iloc[-1].date  # note: accessing 'date' column via attribute
-        if last_date < rates_global_last_date:
-            rates_global_last_date = last_date.to_pydatetime()
+    # scan all series (all durations), and get latest first date , earliest last date
+    # that is, set rates_global_first_date, rates_global_last_date
+    get_first_and_last_dates(earliest_date)
 
-    print()
-    print("Starting date for risk free rate table will be: ", rates_global_first_date.date())
-    print("Ending date for risk free rate table will be: ", rates_global_last_date.date())
-    print()
-
-    # now create numpy array with 1 row for EVERY day (including weekends and holidays) between global_first_date and
-    # today, and 1 column for each FRED series named rate_array
-    # once we do this, in order to grab a rate for a specific day and duration, we just compute # of days between
-    # requested date and global_first_date, and use that as the index into the numpy rate_array, then use the
-    # requested duration to compute interpolated_rate (see detailed explanation below)
-    num_rows = ((rates_global_last_date - rates_global_first_date) + datetime.timedelta(1)).days
+    # now create rates_array from fred_interest_rates dataframe, which is a numpy array with 1 row for EVERY day
+    # (including weekends and holidays) between global_first_date and today, and 1 column for every valid duration
+    # (0 to 360).
     num_cols = len(fred_interest_rates)
-    rates_array = np.empty((num_rows, num_cols), float)
-
-    # interpolate to replace NaN's (after annoying setup to reconcile different NaN type, uses pandas.interpolate)
-    i_col = 0
-    for duration, data in fred_interest_rates.items():
-        rate_df = data['data']  # contains date and rate columns
-        pandas_first_date = rates_global_first_date
-        rate_df = rate_df[rate_df.date >= pandas_first_date]  # remove unneeded rows
-
-        series_array = np.full(num_rows, np.nan)
-        for index, row in rate_df.iterrows():
-            # since pd has a weird way of handling nan's, we have to set numpy array with nan this way:
-            i = (row[0] - rates_global_first_date).days
-            rate = row[1]
-            series_array[i] = rate if not pd.isnull(rate) else np.nan
-
-        # now use pandas interpolate method to remove NaN's
-        # note that number of rows in series_array might be more than in rates_array
-        pandas_series = pd.Series(series_array)
-        pandas_series.interpolate(inplace=True)
-
-        # now append first num_rows rates for a specific series to overall rates array (which is only num_rows long)
-        rates_array[:, i_col] = pandas_series.values[:num_rows]
-
-        # for informational purposes only
-        print("duration = ", rates_duration_list[i_col])
-        row = rate_df.iloc[0]
-        print(row.date.date(), row.rate)
-        row = rate_df.iloc[-1]
-        print(row.date.date(), row.rate)
-        print()
-
-        i_col = i_col + 1
+    num_rows = ((rates_global_last_date - rates_global_first_date) + datetime.timedelta(1)).days
+    rates_array = np.empty((num_rows, 361), float)  # 1 column for each possible duration
+    create_rates_array_from_df()
 
     # free up global memory
     fred_interest_rates = None
@@ -148,29 +101,10 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
     if not rate_sanity_check():
         raise ValueError("FRED rate data did not pass sanity check. Some rates might be less than 0 or greater than 30")
 
-    # now create interpolation_vector, which contains a column index into the rates_array. To
-    # interpolate an interest rate, first you select the row in the rates_array which corresponds to the date that you
-    # want the interest rate for, then you compute the rate by interpolating between the two columns that contain the
-    # rates that bracket the given duration. The interpolation array contains a value for every possible duration
-    # (currently 361; from 0 to 360). a duration of 0 and 1 are treated the same (uses overnight or 1 day rate)
-    # For instance, if you want the 9 day rate (say, for an option expiring in 9 days), for 2020-06-15, you would
-    # first get the rate row in the rates_array for 2020-06-15, then look in the interpolation_array in the 9th row
-    # (index=8), which would be 1, indicating that you should interpolate between the rate in column 1 of the rate
-    # row and column 2 of the rate row
-    rates_interpolation_vector = np.empty(361, int)
-    duration_start = 0
-    i_col = -1
-    for duration_end in rates_duration_list:
-        for i in range(duration_start, duration_end):
-            rates_interpolation_vector[i] = i_col
-        i_col = i_col + 1
-        duration_start = duration_end
-    rates_interpolation_vector[0] = 0  # treat a duration of 0 days the same as 1 day
-    rates_interpolation_vector[360] = i_col - 1
-
-    # convert some variables from pandas.Timestamp to Python date
-    rates_global_first_date = rates_global_first_date.date()
-    rates_global_last_date = rates_global_last_date.date()
+    # the rates interpolation vector contains a value for each duration (0 to 360) which is the first column in
+    # rates_array to use (along with that column+1) for interpolating the rate for the requested duration. This is
+    # necessary because we only have read rates for durations of 1, 7, 30, 60, 90, 180, and 360
+    create_rates_interpolation_vector()
 
     rates_valid = True
 
@@ -179,6 +113,7 @@ def read_risk_free_rates(earliest_date: datetime = datetime.date(2000, 1, 1)):
 def read_fred_series(earliest_date: datetime, duration: int, series: dict):
     series_name = series['name']
     print("Reading ", series_name)
+    today_str: str = datetime.date.today().strftime('%Y-%m-%d')
     fred_url = f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_name}&cosd=1985-01-01&coed={today_str}'
     rate_df = pd.read_csv(fred_url, header=0, names=['date', 'rate'], parse_dates=['date'], na_values={'rate': '.'},
                           keep_default_na=False, engine='c')
@@ -195,6 +130,134 @@ def update_rates(result: (int, pd.DataFrame)):
     rate_df = result[1]
     series = fred_interest_rates[duration]
     series['data'] = rate_df
+
+
+# get latest first date over all series, earliest last date over all series
+def get_first_and_last_dates(earliest_date: datetime):
+    global rates_global_first_date, rates_global_last_date
+
+    rates_global_first_date = earliest_date
+    rates_global_last_date = datetime.datetime(3000, 1, 1)
+    for series in fred_interest_rates.values():
+        rate_df = series['data']
+        first_date = rate_df.iloc[0].date  # note: accessing 'date' column via attribute
+        if first_date > rates_global_first_date:
+            rates_global_first_date = first_date.to_pydatetime()
+        last_date = rate_df.iloc[-1].date  # note: accessing 'date' column via attribute
+        if last_date < rates_global_last_date:
+            rates_global_last_date = last_date.to_pydatetime()
+
+    print()
+    print("Starting date for risk free rate table will be: ", rates_global_first_date.date())
+    print("Ending date for risk free rate table will be: ", rates_global_last_date.date())
+    print()
+
+
+# create rates_array, which will contain an interest rate for every day from rates_global_first_date to
+# rates_global_last_date (number of rows) and every duration from 0 to 360 (number of columns)
+# fills in rates_array from fred_interest_rates dataframe values for durations 1, 7, 30, 60, 90, 180, 360, that are NOT
+# nan's, then interpolate between non-nan values to replace nan's
+def create_rates_array_from_df():
+    global rates_array
+
+    # create array full of nan's
+    num_rows = ((rates_global_last_date - rates_global_first_date) + datetime.timedelta(1)).days
+    rates_array = np.full((num_rows, 361), numpy.nan, float)  # 1 row for each date, 1 column for each possible duration
+
+    # set rates_array elements to non-nan's from fred dataframe
+    i_col = 0
+    pd_first_date = pd.to_datetime(rates_global_first_date)  # stupid conversion necessity
+    pd_last_date = pd.to_datetime(rates_global_last_date)  # stupid conversion necessity
+    for duration, data in fred_interest_rates.items():
+        rate_df = data['data']  # contains date and rate columns for a given duration
+
+        # get indices of first and last non Nan's for each duration
+        rates = rate_df.rate  # rate Series
+        first_non_na_index = rates.first_valid_index()
+        first_non_na_value = rates[first_non_na_index]
+        last_non_na_index = rates.last_valid_index()
+        last_non_na_value = rates[last_non_na_index]
+
+        # for nan's at beginning of series, fill with value of first nan
+        # for nan's at end of series, fill with value of first nan
+        rates[:first_non_na_index] = first_non_na_value
+        rates[last_non_na_index:] = last_non_na_value
+
+        # remove unneeded rows from rate_df
+        rate_df = rate_df[rate_df.date >= pd_first_date]
+
+        # now place each rate in rate_df dataframe in proper place in ndarray
+        for index, row in rate_df.iterrows():
+            # since pd has a weird way of handling nan's, we have to set numpy array with nan this way:
+            i = (row[0] - pd_first_date).days
+            rate = row[1]
+            rates_array[i, i_col] = rate if not pd.isnull(rate) else np.nan
+
+        # now place each rate in appropriate row of rates_array, based on date of rate. note this MAY NOT be the same
+        # row index as in the dataframe, since the datafram may not have values for all dates
+        #     if i < first_non_na_index:
+        #         rates[i] = first_non_na_value
+        #         continue
+        #     if i > last_non_na_index:
+        #         rates[i] = last_non_na_value
+        #         continue
+
+
+
+
+        #rate_df = rate_df[rate_df.date >= pd_first_date]
+        #rate_df = rate_df[rate_df.date <= pd_last_date]
+        # get indexes of first non-na and last non-na for each column
+
+        # for index, row in rate_df.iterrows():
+        #     # since pd has a weird way of handling nan's, we have to set numpy array with nan this way:
+        #     i = (row[0] - pd_first_date).days
+        #     rate = row[1]
+        #     rates_array[i, duration] = rate if not pd.isnull(rate) else np.nan
+        #
+        #
+        #
+        # # now use pandas interpolate method to remove NaN's
+        # # note that number of rows in series_array might be more than in rates_array
+        # pandas_series = pd.Series(series_array)
+        # pandas_series.interpolate(inplace=True)
+        #
+        # # now append first num_rows rates for a specific series to overall rates array (which is only num_rows long)
+        # rates_array[:, i_col] = pandas_series.values[:num_rows]
+        #
+        # # for informational purposes only
+        # print("duration = ", rates_duration_list[i_col])
+        # row = rate_df.iloc[0]
+        # print(row.date.date(), row.rate)
+        # row = rate_df.iloc[-1]
+        # print(row.date.date(), row.rate)
+        # print()
+
+        i_col = i_col + 1
+    x = 1
+
+# in order to calculate the rate for any given duration between 0 and 360, you have to find the two columns in the
+# rates_array (which has a column for a select set of durations: 1, 7, 30, 60, 90, 180, and 360) that brackets
+# the requested duration. For instance, if I wanted the rate for a duration of 9, I would need to use the column
+# for 7 and 30. Then, I would use the requested date to find the row in those two series that contained the two
+# rates to interpolate between. So, we need a quick way to find the two columns. WHat I do here is create a vector
+# named interpolation vector which has a row for every possible duration (0 to 360) and the value is the column
+# number (0 to 6) of the first of the two columns to use for the interpolation (the second column is just the
+# first column + 1). The duration 360 is a little special because there is no column+1, so we just set that
+# value to 5 (the column for 180). If you request a rate for a duration of 360, it will use colums for 180 and 360,
+# but since the interpolation ration will be 1, it just returns the value for the duration of 360
+def create_rates_interpolation_vector() -> np.ndarray:
+    rates_interpolation_vector = np.empty(361, int)
+    duration_start = 0
+    i_col = -1
+    for duration_end in rates_duration_list:
+        for i in range(duration_start, duration_end):
+            rates_interpolation_vector[i] = i_col
+        i_col = i_col + 1
+        duration_start = duration_end
+    rates_interpolation_vector[0] = 0  # treat a duration of 0 days the same as 1 day
+    rates_interpolation_vector[360] = i_col - 1
+    return rates_interpolation_vector
 
 
 # make sure rates_df has reasonable values
@@ -227,11 +290,13 @@ def risk_free_rate(requested_date: datetime, duration: int) -> float:
     # check arguments to make sure they are valid
     assert rates_valid,\
         'ReadFredTreasuryRates.py:risk_free_rate: rate data not available. Did you call read_risk_free_rates?'
+    x = type(requested_date)
+    assert type(requested_date) is datetime.datetime, f'ReadFredTreasuryRates.py:risk_free_rate: type of requested_date must be datetime, not {type(requested_date)}'
     date_index = (requested_date - rates_global_first_date).days
     assert date_index >= 0,\
         f'ReadFredTreasuryRates.py:risk_free_rate: requested date ({requested_date}) is before earliest available date in series ({rates_global_first_date})'
     if date_index >= len(rates_array):
-        assert requested_date <= datetime.date.today(),\
+        assert requested_date <= datetime.datetime.today(),\
             f'ReadFredTreasuryRates.py:risk_free_rate: requested date ({requested_date}) is after latest available date in series ({rates_global_last_date})'
         date_index = len(rates_array) - 1
     assert duration >= 0,\
@@ -261,7 +326,7 @@ def risk_free_rate(requested_date: datetime, duration: int) -> float:
 # read the sp500 dividend yield (in percent) from Nasdaq Data Link (formerly Quandl) into global dividend array
 # which has an entry for every day, starting at beginning date
 # raises Exception if there are any NaNs, if earliest date is later than today
-def read_sp500_dividend_yield(earliest_date: datetime.date = datetime.date(2000, 1, 1)):
+def read_sp500_dividend_yield(earliest_date: datetime.datetime = datetime.date(2000, 1, 1)):
     global dividends_global_first_date, dividends_global_last_date, dividend_array, dividends_valid
 
     # note that series is returned in descending date order (today is the first row)
@@ -289,8 +354,8 @@ def read_sp500_dividend_yield(earliest_date: datetime.date = datetime.date(2000,
     dividend_series = pd.Series(dividend_array)
     dividend_series.interpolate(inplace=True)
     dividend_array = dividend_series.to_numpy()
-    dividends_global_first_date = dividends_global_first_date.to_pydatetime().date()  # convert from pandas Timestamp to Python datetime
-    dividends_global_last_date = last_date.to_pydatetime().date()
+    dividends_global_first_date = dividends_global_first_date.to_pydatetime()  # convert from pandas Timestamp to Python datetime
+    dividends_global_last_date = last_date.to_pydatetime()
 
     # do sanity check
     if not dividend_sanity_check():
@@ -320,14 +385,14 @@ def dividend_sanity_check() -> bool:
     return passed
 
 
-def sp500_dividend_yield(requested_date: datetime) -> float:
+def sp500_dividend_yield(requested_date: datetime.datetime) -> float:
     assert dividends_valid,\
         'ReadFredTreasuryRates.py:sp500_dividend_yield: dividend data not available. Did you call read_sp500_dividend_yield?'
     date_index = (requested_date - dividends_global_first_date).days
     assert date_index >= 0,\
         f'ReadFredTreasuryRates.py:sp500_dividend_yield: requested date ({requested_date}) is before earliest available date in series ({dividends_global_first_date})'
     if date_index >= len(dividend_array):
-        assert requested_date <= datetime.date.today(),\
+        assert requested_date <= datetime.datetime.today(),\
             f'ReadFredTreasuryRates.py:sp500_dividend_yield: requested date ({requested_date}) is after latest available date in series ({dividends_global_last_date})'
         date_index = len(dividend_array) - 1
 
@@ -344,14 +409,13 @@ if __name__ == '__main__':
     #
     # tests of risk free rate
     #
-    date0 = datetime.date(2020, 6, 15)
+    date0 = datetime.datetime(2020, 6, 15)
     rate1 = risk_free_rate(date0, 1)
     rate9 = risk_free_rate(date0, 9)
     rate47 = risk_free_rate(date0, 47)
     rate200 = risk_free_rate(date0, 200)
     rate360 = risk_free_rate(date0, 360)
-    date0 = datetime.datetime(2020, 6, 15).date()
-    rate200t = risk_free_rate(datetime.date.today(), 200)
+    rate200t = risk_free_rate(datetime.datetime.today(), 200)
 
     rate0 = risk_free_rate(date0, 0)
     assert rate0 == rate1, f"0 day rate ({rate0}) does not match 1 day rate ({rate0})"
@@ -370,7 +434,7 @@ if __name__ == '__main__':
         exception_caught = True
     assert exception_caught, "Error: no exception caught when requesting rate for duration of 500 (greater than 360)"
 
-    date0 = datetime.date(2001, 1, 1)
+    date0 = datetime.datetime(2001, 1, 1)
     exception_caught = False
     try:
         rate9 = risk_free_rate(date0, 9)
@@ -382,23 +446,23 @@ if __name__ == '__main__':
     # tests of dividend yield
     #
     start_time = time.time()
-    read_sp500_dividend_yield(datetime.date(2000, 1, 1))    # parameter is earliest date that we want series for
+    read_sp500_dividend_yield(datetime.datetime(2000, 1, 1))    # parameter is earliest date that we want series for
     end_time = time.time()
     print(f"read_sp500_dividend_yield: Elapsed time was {round(end_time - start_time,3)} seconds")
 
-    yield1 = sp500_dividend_yield(datetime.date(2016, 6, 1))
-    yield2 = sp500_dividend_yield(datetime.date.today())
+    yield1 = sp500_dividend_yield(datetime.datetime(2016, 6, 1))
+    yield2 = sp500_dividend_yield(datetime.datetime.today())
 
     exception_caught = False
     try:
-        yield3 = sp500_dividend_yield(datetime.date(1999, 6, 1))
+        yield3 = sp500_dividend_yield(datetime.datetime(1999, 6, 1))
     except AssertionError:
         exception_caught = True
     assert exception_caught, f"Error: no exception caught when requesting dividend yield for date before first available date ({dividends_global_first_date})"
 
     exception_caught = False
     try:
-        yield4 = sp500_dividend_yield(datetime.date(2030, 6, 1))
+        yield4 = sp500_dividend_yield(datetime.datetime(2030, 6, 1))
     except AssertionError:
         exception_caught = True
     assert exception_caught, f"Error: no exception caught when requesting dividend yield for date after last available date ({dividends_global_last_date})"
