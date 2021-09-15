@@ -180,7 +180,7 @@ def create_rates_array_from_df():
 
         # for nan's at beginning of series, fill with value of first nan
         # for nan's at end of series, fill with value of first nan
-        rates[:first_non_na_index] = first_non_na_value
+        rates[rates.first:first_non_na_index] = first_non_na_value
         rates[last_non_na_index:] = last_non_na_value
 
         # remove unneeded rows from rate_df
