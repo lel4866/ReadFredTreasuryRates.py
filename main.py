@@ -89,22 +89,18 @@ def read_risk_free_rates(earliest_date: datetime.datetime = datetime.datetime(20
     # now create rates_array from fred_interest_rates dataframe, which is a numpy array with 1 row for EVERY day
     # (including weekends and holidays) between global_first_date and today, and 1 column for every valid duration
     # (0 to 360).
-    num_cols = len(fred_interest_rates)
-    num_rows = ((rates_global_last_date - rates_global_first_date) + datetime.timedelta(1)).days
-    rates_array = np.empty((num_rows, 361), float)  # 1 column for each possible duration
     create_rates_array_from_df()
 
     # free up global memory
     fred_interest_rates = None
 
+    # do a piecewise linear interpolation of nan's along each column that was actually in the fred dataframe
+    # that is, columns 1, 7, 30, 60, 90, 180, 360. When we are done, rates_array will have no nan's
+    interpolate_rates_array()
+
     # do sanity check
     if not rate_sanity_check():
         raise ValueError("FRED rate data did not pass sanity check. Some rates might be less than 0 or greater than 30")
-
-    # the rates interpolation vector contains a value for each duration (0 to 360) which is the first column in
-    # rates_array to use (along with that column+1) for interpolating the rate for the requested duration. This is
-    # necessary because we only have read rates for durations of 1, 7, 30, 60, 90, 180, and 360
-    create_rates_interpolation_vector()
 
     rates_valid = True
 
@@ -153,111 +149,104 @@ def get_first_and_last_dates(earliest_date: datetime):
     print()
 
 
-# create rates_array, which will contain an interest rate for every day from rates_global_first_date to
+# create rates_array, which will (eventually) contain an interest rate for every day from rates_global_first_date to
 # rates_global_last_date (number of rows) and every duration from 0 to 360 (number of columns)
-# fills in rates_array from fred_interest_rates dataframe values for durations 1, 7, 30, 60, 90, 180, 360, that are NOT
-# nan's, then interpolate between non-nan values to replace nan's
+# fills in rates_array from fred_interest_rates dataframe values for durations 1, 7, 30, 60, 90, 180, 360
+# note that each of those columns will have nan's (because fred_interest_rates dataframe does not have values
+# for weekends or holidays. Also, the remaining columns (NOT 1, 7, 30, etc) will be all nan's
 def create_rates_array_from_df():
     global rates_array
 
-    # create array full of nan's
+    # create numpy rates_array full of nan's for every valid day and duration (0 to 360),
+    # unlike fred_interest_rates dataframe, which only has data for weekdays and 7 different durations
     num_rows = ((rates_global_last_date - rates_global_first_date) + datetime.timedelta(1)).days
     rates_array = np.full((num_rows, 361), numpy.nan, float)  # 1 row for each date, 1 column for each possible duration
 
-    # set rates_array elements to non-nan's from fred dataframe
-    i_col = 0
-    pd_first_date = pd.to_datetime(rates_global_first_date)  # stupid conversion necessity
-    pd_last_date = pd.to_datetime(rates_global_last_date)  # stupid conversion necessity
+    pd_global_first_date = pd.to_datetime(rates_global_first_date)  # stupid conversion necessity
+    pd_global_last_date = pd.to_datetime(rates_global_last_date)  # stupid conversion necessity
     for duration, data in fred_interest_rates.items():
-        rate_df = data['data']  # contains date and rate columns for a given duration
-
-        # get indices of first and last non Nan's for each duration
-        rates = rate_df.rate  # rate Series
-        first_non_na_index = rates.first_valid_index()
-        first_non_na_value = rates[first_non_na_index]
-        last_non_na_index = rates.last_valid_index()
-        last_non_na_value = rates[last_non_na_index]
-
-        # for nan's at beginning of series, fill with value of first nan
-        # for nan's at end of series, fill with value of first nan
-        rates[rates.first:first_non_na_index] = first_non_na_value
-        rates[last_non_na_index:] = last_non_na_value
-
         # remove unneeded rows from rate_df
-        rate_df = rate_df[rate_df.date >= pd_first_date]
+        rate_df = data['data']  # contains date and rate columns for a given duration
+        rate_df = rate_df[rate_df.date >= pd_global_first_date]
+        rate_df = rate_df[rate_df.date <= pd_global_last_date]
 
-        # now place each rate in rate_df dataframe in proper place in ndarray
+        # now place each rate in rate_df dataframe in proper place in ndarray based on date (row) and duration (column)
         for index, row in rate_df.iterrows():
             # since pd has a weird way of handling nan's, we have to set numpy array with nan this way:
-            i = (row[0] - pd_first_date).days
+            i = (row[0] - pd_global_first_date).days
             rate = row[1]
-            rates_array[i, i_col] = rate if not pd.isnull(rate) else np.nan
-
-        # now place each rate in appropriate row of rates_array, based on date of rate. note this MAY NOT be the same
-        # row index as in the dataframe, since the datafram may not have values for all dates
-        #     if i < first_non_na_index:
-        #         rates[i] = first_non_na_value
-        #         continue
-        #     if i > last_non_na_index:
-        #         rates[i] = last_non_na_value
-        #         continue
+            rates_array[i, duration] = rate if not pd.isnull(rate) else np.nan
 
 
+# do a piecewise linear interpolation of nan's along each column that was actually in the fred dataframe
+# that is, columns 1, 7, 30, 60, 90, 180, 360. When we are done, those columns will have no nan's. Then
+# linearly interpolate each row to fill in for the other columns
+def interpolate_rates_array():
+    num_rows = rates_array.shape[0]
+    num_rows_m1 = num_rows - 1
+
+    for i_col in rates_duration_list:
+        col = rates_array[:,i_col]
+        # find index of next non-nan
+        index_of_prev_non_nan = -1
+        nan_found = False
+        for index, rate in np.ndenumerate(col):
+            idx = index[0]  # because index is actually a tuple
+            if np.isnan(rate):
+                nan_found = True
+                # if last column, just propagate last non-nan value forward
+                if idx == num_rows_m1:  # num_rows_m1 = num_rows - 1
+                    col[index_of_prev_non_nan+1:] = col[index_of_prev_non_nan]
+                continue
+            if not nan_found:
+                index_of_prev_non_nan = idx
+                continue
+            # we found a non-nan after finding an nan
+            nan_found = False
+            value = col[idx]
+            # interpolate between non-nan just found and previous non-nan
+            if index_of_prev_non_nan == -1:
+                # this is first non-nan in column...just fill backwards
+                col[:idx] = value
+            else:
+                # interpolate between index_of_prev_non_nan to idx
+                idx_range = idx - index_of_prev_non_nan
+                interpolated_value = col[index_of_prev_non_nan]  # starting value
+                value_range = value - interpolated_value
+                value_increment = value_range/idx_range
+                for nan_index in range(index_of_prev_non_nan+1, idx):
+                    interpolated_value = interpolated_value + value_increment
+                    col[nan_index] = interpolated_value
+
+            index_of_prev_non_nan = idx
+
+    # now linearly interpolate across each row to fill in the rest of the colmnns
+    for row in rates_array:
+        for index, col1 in  np.ndenumerate(rates_duration_list[0:-1]):
+            col2 = rates_duration_list[index[0] + 1]
+            interpolate(row, col1, col2)  # interpolate between rates in row[col1] and row[col2]
+
+    # now convert LIBOR rate (based on 360 days/year) to rate used in Balck Scholes (based on 365 days/year)
+    for duration in range(1,361):
+        col = rates_array[:,duration]
+        rates_array[:,duration] = black_scholes_rate(duration, col)
 
 
-        #rate_df = rate_df[rate_df.date >= pd_first_date]
-        #rate_df = rate_df[rate_df.date <= pd_last_date]
-        # get indexes of first non-na and last non-na for each column
-
-        # for index, row in rate_df.iterrows():
-        #     # since pd has a weird way of handling nan's, we have to set numpy array with nan this way:
-        #     i = (row[0] - pd_first_date).days
-        #     rate = row[1]
-        #     rates_array[i, duration] = rate if not pd.isnull(rate) else np.nan
-        #
-        #
-        #
-        # # now use pandas interpolate method to remove NaN's
-        # # note that number of rows in series_array might be more than in rates_array
-        # pandas_series = pd.Series(series_array)
-        # pandas_series.interpolate(inplace=True)
-        #
-        # # now append first num_rows rates for a specific series to overall rates array (which is only num_rows long)
-        # rates_array[:, i_col] = pandas_series.values[:num_rows]
-        #
-        # # for informational purposes only
-        # print("duration = ", rates_duration_list[i_col])
-        # row = rate_df.iloc[0]
-        # print(row.date.date(), row.rate)
-        # row = rate_df.iloc[-1]
-        # print(row.date.date(), row.rate)
-        # print()
-
-        i_col = i_col + 1
+# interpolates values between vector[col1] and vector[col2]
+# vector[col1] and vector[col2] MUST NOT be nan's.
+def interpolate(vector: np.ndarray, col1: int, col2: int):
+    idx_range = col2 - col1
+    interpolated_value = vector[col1]  # starting value
+    value_range = vector[col2] - interpolated_value
+    value_increment = value_range / idx_range
+    for i in range(col1 + 1, col2):
+        interpolated_value = interpolated_value + value_increment
+        vector[i] = interpolated_value
     x = 1
 
-# in order to calculate the rate for any given duration between 0 and 360, you have to find the two columns in the
-# rates_array (which has a column for a select set of durations: 1, 7, 30, 60, 90, 180, and 360) that brackets
-# the requested duration. For instance, if I wanted the rate for a duration of 9, I would need to use the column
-# for 7 and 30. Then, I would use the requested date to find the row in those two series that contained the two
-# rates to interpolate between. So, we need a quick way to find the two columns. WHat I do here is create a vector
-# named interpolation vector which has a row for every possible duration (0 to 360) and the value is the column
-# number (0 to 6) of the first of the two columns to use for the interpolation (the second column is just the
-# first column + 1). The duration 360 is a little special because there is no column+1, so we just set that
-# value to 5 (the column for 180). If you request a rate for a duration of 360, it will use colums for 180 and 360,
-# but since the interpolation ration will be 1, it just returns the value for the duration of 360
-def create_rates_interpolation_vector() -> np.ndarray:
-    rates_interpolation_vector = np.empty(361, int)
-    duration_start = 0
-    i_col = -1
-    for duration_end in rates_duration_list:
-        for i in range(duration_start, duration_end):
-            rates_interpolation_vector[i] = i_col
-        i_col = i_col + 1
-        duration_start = duration_end
-    rates_interpolation_vector[0] = 0  # treat a duration of 0 days the same as 1 day
-    rates_interpolation_vector[360] = i_col - 1
-    return rates_interpolation_vector
+
+def black_scholes_rate(duration: int, libor_rate: float) -> float:
+    return 360.0/duration * np.log(1.0 + libor_rate*duration/365.0)
 
 
 # make sure rates_df has reasonable values
@@ -268,6 +257,9 @@ def rate_sanity_check() -> bool:
     prior_rates = rates_array[0]
     for index_tuple, rate in np.ndenumerate(rates_array):
         duration_index = index_tuple[1]
+        # column 0 of rates_array is nan (can't have a duration of 0)
+        if duration_index == 0:
+            continue
         if rate <= 0 or rate >= 30:
             date = rates_global_first_date + pd.DateOffset(index_tuple[0])
             duration = rates_duration_list[duration_index]
@@ -299,28 +291,11 @@ def risk_free_rate(requested_date: datetime, duration: int) -> float:
         assert requested_date <= datetime.datetime.today(),\
             f'ReadFredTreasuryRates.py:risk_free_rate: requested date ({requested_date}) is after latest available date in series ({rates_global_last_date})'
         date_index = len(rates_array) - 1
-    assert duration >= 0,\
-        f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is less than 0. Must be between 0 and 360'
+    assert duration > 0,\
+        f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is less than 0. Must be between 1 and 360'
     assert duration <= 360,\
         f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 0 and 360'
-
-    # treat a duration of 0 as 1
-    if duration == 0:
-        duration = 1
-
-    row = rates_array[date_index]
-    column_index = rates_interpolation_vector[duration]
-    starting_duration = rates_duration_list[column_index]
-    ending_duration = rates_duration_list[column_index + 1]
-    starting_val = row[column_index]
-    ending_val = row[column_index+1]
-    ratio = (duration - starting_duration) / (ending_duration - starting_duration)
-    libor_rate = starting_val + ratio*(ending_val - starting_val)
-
-    # convert LIBOR rate to BS convention per Adam Speight in Trading Dominion Mastermind session comment for 2021-07-07
-    bs_rate = 360.0/duration * np.log(1.0 + libor_rate*duration/365.0)
-
-    return bs_rate
+    return rates_array[date_index, duration]
 
 
 # read the sp500 dividend yield (in percent) from Nasdaq Data Link (formerly Quandl) into global dividend array
@@ -417,15 +392,12 @@ if __name__ == '__main__':
     rate360 = risk_free_rate(date0, 360)
     rate200t = risk_free_rate(datetime.datetime.today(), 200)
 
-    rate0 = risk_free_rate(date0, 0)
-    assert rate0 == rate1, f"0 day rate ({rate0}) does not match 1 day rate ({rate0})"
-
     exception_caught = False
     try:
-        rate6 = risk_free_rate(date0, -1)
+        rate0 = risk_free_rate(date0, 0)
     except AssertionError:
         exception_caught = True
-    assert exception_caught, "Error: no exception caught when requesting rate for duration of -1"
+    assert exception_caught, "Error: no exception caught when requesting rate for duration of 0"
 
     exception_caught = False
     try:
