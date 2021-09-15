@@ -282,7 +282,6 @@ def risk_free_rate(requested_date: datetime, duration: int) -> float:
     # check arguments to make sure they are valid
     assert rates_valid,\
         'ReadFredTreasuryRates.py:risk_free_rate: rate data not available. Did you call read_risk_free_rates?'
-    x = type(requested_date)
     assert type(requested_date) is datetime.datetime, f'ReadFredTreasuryRates.py:risk_free_rate: type of requested_date must be datetime, not {type(requested_date)}'
     date_index = (requested_date - rates_global_first_date).days
     assert date_index >= 0,\
