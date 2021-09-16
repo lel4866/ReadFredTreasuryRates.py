@@ -41,6 +41,9 @@ rates_global_first_date: datetime.datetime = None  # will hold earliest existing
 rates_global_last_date: datetime.datetime = None  # will hold earliest existing date over all the FRED series
 rates_duration_list: np.array = None  # the durations of the available FRED series
 rates_interpolation_vector: np.ndarray = None  # for each day, has index of series to use to interpolate
+
+# the main array that will hold the rates for all durations from 1 to 360 and all dates requested that are available
+# if you want, for better speed, you can use this array directly instead of calling the risk_free_rate function
 rates_array: np.ndarray = None  # the actual rate vector...1 value per day in percent
 
 # the main data structure which is filled in by read_risk_free_rates
@@ -291,7 +294,7 @@ def risk_free_rate(requested_date: datetime, duration: int) -> float:
             f'ReadFredTreasuryRates.py:risk_free_rate: requested date ({requested_date}) is after latest available date in series ({rates_global_last_date})'
         date_index = len(rates_array) - 1
     assert duration > 0,\
-        f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is less than 0. Must be between 1 and 360'
+        f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is less than or equal to 0. Must be between 1 and 360'
     assert duration <= 360,\
         f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 0 and 360'
     return rates_array[date_index, duration]
