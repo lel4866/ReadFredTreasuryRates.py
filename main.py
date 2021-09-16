@@ -197,10 +197,10 @@ def interpolate_rates_array():
             idx = index[0]  # because index is actually a tuple
             if np.isnan(rate):
                 nan_found = True
-                # if last column, just propagate last non-nan value forward
+                # if last row, just propagate last non-nan value forward
                 if idx == num_rows_m1:  # num_rows_m1 = num_rows - 1
                     col[index_of_prev_non_nan+1:] = col[index_of_prev_non_nan]
-                continue
+                break
             if not nan_found:
                 index_of_prev_non_nan = idx
                 continue
@@ -245,7 +245,6 @@ def interpolate(vector: np.ndarray, col1: int, col2: int):
     for i in range(col1 + 1, col2):
         interpolated_value = interpolated_value + value_increment
         vector[i] = interpolated_value
-    x = 1
 
 
 def black_scholes_rate(duration: int, libor_rate: float) -> float:
