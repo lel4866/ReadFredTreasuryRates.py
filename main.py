@@ -295,7 +295,7 @@ def risk_free_rate(requested_date: datetime, duration: int) -> float:
     assert duration > 0,\
         f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is less than or equal to 0. Must be between 1 and 360'
     assert duration <= 360,\
-        f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 0 and 360'
+        f'ReadFredTreasuryRates.py:risk_free_rate: requested duration ({duration} is greater than 360. Must be between 1 and 360'
     return rates_array[date_index, duration]
 
 
