@@ -192,20 +192,20 @@ def interpolate_rates_array():
         col = rates_array[:,i_col]
         # find index of next non-nan
         index_of_prev_non_nan = -1
-        nan_found = False
+        non_nan_found = False
         for index, rate in np.ndenumerate(col):
             idx = index[0]  # because index is actually a tuple
             if np.isnan(rate):
-                nan_found = True
+                non_nan_found = True
                 # if last row, just propagate last non-nan value forward
                 if idx == num_rows_m1:  # num_rows_m1 = num_rows - 1
                     col[index_of_prev_non_nan+1:] = col[index_of_prev_non_nan]
                 break
-            if not nan_found:
+            if not non_nan_found:
                 index_of_prev_non_nan = idx
                 continue
             # we found a non-nan after finding an nan
-            nan_found = False
+            non_nan_found = False
             value = col[idx]
             # interpolate between non-nan just found and previous non-nan
             if index_of_prev_non_nan == -1:
